@@ -23,7 +23,7 @@ int ssh_handle_key_exchange(ssh_session session);
 int main(int argc, char **argv)
 {
   unsigned int port = 50555;
-	const char *hostname = "192.168.0.14";
+	const char *hostname = "127.0.0.1";
 	const char *RSA_key = "/etc/ssh/ssh_host_rsa_key";
 	const char *DSA_key = "/etc/ssh/ssh_host_dsa_key";
 	int log = SSH_LOG_PROTOCOL;
@@ -47,18 +47,17 @@ int main(int argc, char **argv)
 	
 	sin.sin_family = AF_INET;
 	sin.sin_port = htons(port);
-	sin.sin_addr.s_addr = inet_addr("192.168.0.14"); 
-	/*
+	sin.sin_addr.s_addr = inet_addr("127.0.0.1"); 
+     
 	if (bind(sok, (const struct sockaddr *) &sin, sizeof(sin)) ==-1)
 	 perror("bind");
 	
 	if (listen(sok, SOMAXCONN) == -1)
 	 perror("listen");
-	*/
+
 	ssh_init();
 	
 	sshbind = ssh_bind_new();
-	session = ssh_new();
 	
 	ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_BINDPORT_STR,  &port);
 	ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_BINDADDR, hostname);
@@ -73,21 +72,26 @@ int main(int argc, char **argv)
 	  fprintf(stderr,"error bind %s\n", ssh_get_error(sshbind));
 	ssh_bind_set_blocking(sshbind, 0);
 
-	if (ssh_bind_accept(sshbind, session) == SSH_ERROR)
-	     fprintf(stderr,"Error accept %s\n", ssh_get_error(sshbind));
-	else
-	      dprintf(1,"connection Accepted", strlen("connection Accepted"));
 	
-	ssh_handle_key_exchange(session); 
-	  fprintf(stderr, "ssh_handle_key_exchange: %s\n", ssh_get_error(session));
+	//fprintf(stderr, "ssh_handle_key_exchange: %s\n", ssh_get_error(session));
 
-	  ssh_set_auth_methods(session, SSH_AUTH_METHOD_PASSWORD);
+	
 
 	  
 	  while (1) {
-	  dprintf(1,"WAITING\n", strlen("WAITING\n"));
-	
-	}
+	    session = ssh_new();
+	    if (session == NULL)
+	      {
+		dprintf(1,"error allocating", strlen("error allocating"));
+		continue;
+	      }
+	    if (ssh_bind_accept(sshbind, session) == SSH_ERROR)
+	     fprintf(stderr,"Error accept %s\n", ssh_get_error(sshbind));
+	else
+	      dprintf(1,"connection Accepted", strlen("connection Accepted"));
+	    ssh_handle_key_exchange(session); 
+	    ssh_set_auth_methods(session, SSH_AUTH_METHOD_PASSWORD);
+	  }
 	ssh_bind_free(sshbind);
 	ssh_free(session);
 }
