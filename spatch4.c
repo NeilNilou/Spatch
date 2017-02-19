@@ -164,6 +164,7 @@ int main(int argc, char **argv)
 		dprintf(1,"error allocating", strlen("error allocating"));
 		continue;
 	      }
+	    ssh_bind_fd_toaccept(sshbind);
 	    socket_t sessionSocket = ssh_bind_get_fd(sshbind);
 	    if (ssh_bind_accept_fd(sshbind, session, sessionSocket) == SSH_ERROR)
 	      fprintf(stderr,"Error accepting a connection %s\n", ssh_get_error(sshbind));
@@ -174,11 +175,23 @@ int main(int argc, char **argv)
 	      ssh_callbacks_init(&server_cb);
 	      ssh_set_server_callbacks(session, &server_cb);
 	    }
+	    /*
 	    if (ssh_handle_key_exchange(session) != SSH_OK) {
 	      printf("Error : ssh_handle_key_exchange, %s\n", ssh_get_error(sshbind));
 	      return 1;
 	    }
 	    else {
+	    */
+
+	    int keyExchangeResponse = ssh_handle_key_exchange(session);
+	    if (keyExchangeResponse != SSH_OK) {
+	      while (keyExchangeResponse == SSH_AGAIN)
+		keyExchangeResponse = ssh_handle_key_exchange(session);
+	      if (keyExchangeResponse != SSH_OK) {
+		printf("Key exchange error", ssh_get_error(session));
+	      }
+	    }
+	    
 	      ssh_set_auth_methods(session, SSH_AUTH_METHOD_PASSWORD);
 	      ssh_event_add_session(event, session);
 	      printf("ssh_handle_key_exchange: Successful");
@@ -187,7 +200,7 @@ int main(int argc, char **argv)
 		printf("Authentication error: %s\n", ssh_get_error(session));
 		return 1;
 	      }
-	    }
+	      //}
 	}
 	ssh_bind_free(sshbind);
 	ssh_free(session);
