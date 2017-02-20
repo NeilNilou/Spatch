@@ -21,12 +21,20 @@
 
 #else
 
-#define KEYS_FOLDER "./ssh_keys/"
+#define KEYS_FOLDER "/etc/ssh/"
 
 #endif
 
 int use_syslog = 0;
 int verbose = 0;
+
+static int auth_password(const char *user, const char *password) {
+  if(strcmp(user,"nilou"))
+    return 0;
+  if(strcmp(password,"TestSpatch"))
+    return 0;
+  return 1; // authenticated
+}
 
 void handle_sigchild(int signum) {
   int status = -1;
@@ -97,6 +105,9 @@ int main() {
   int log = SSH_LOG_FUNCTIONS;
   ssh_key pkey;
   int r = -1;
+  int sftp = 0;
+  char buf[2048];
+  int i;
   
   //fd = bind_socket(sshbind, host, port);
   //ssh_init();
@@ -106,15 +117,15 @@ int main() {
   ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_BINDADDR, host);
   ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_LOG_VERBOSITY, &log);
   ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_LOG_VERBOSITY_STR, &log);
-  ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_HOSTKEY, "ssh-rsa");
+  //ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_HOSTKEY, "ssh-rsa");
   //ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_HOSTKEY, "ssh-dsa");
   ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_RSAKEY, KEYS_FOLDER "ssh_host_rsa_key");
-  //ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_DSAKEY, KEYS_FOLDER "ssh_host_dsa_key");
-  ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_BANNER, "Welcome to Spatch !\n");
+  ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_DSAKEY, KEYS_FOLDER "ssh_host_dsa_key");
+  //ssh_bind_options_set(sshbind, SSH_BIND_OPTIONS_BANNER, "Welcome to Spatch !\n");
 
   if (ssh_bind_listen(sshbind) < 0)
     fprintf(stderr,"error bind %s\n", ssh_get_error(sshbind));
-  ssh_bind_set_blocking(sshbind, 0);
+  //ssh_bind_set_blocking(sshbind, 0);
 
   signal(SIGCHLD, &handle_sigchild);
   
@@ -165,17 +176,33 @@ int main() {
       fprintf(stderr,"Error: Failed to import DSA key, %s\n", ssh_get_error(sshbind));
     }
     */
+
+    
     if (ssh_handle_key_exchange(session) != SSH_OK) {
       printf("Error: ssh_handle_key_exchange, %s\n", ssh_get_error(sshbind));
-      return 1;
+      goto error;
     }
+    /*
+    else {
+      int rc;
+      printf("Connecting...\n");
+      rc = ssh_connect(session);
+      if (rc != SSH_OK) error(session);
+      printf("Password Autentication...\n");
+      rc = ssh_userauth_password(session,"nilou","TestSpatch");
+      if (rc != SSH_AUTH_SUCCESS) error(session);
+    }
+    */
     else {
       int auth = 0;
       int authdelay = 0;
       int doubledelay = 0;
       int maxfail = 0;
+      ssh_message message;
+      ssh_channel chan = 0;
+      
       do {
-	ssh_message message = ssh_message_get(session);
+	message = ssh_message_get(session);
 	if (message == NULL)
 	  break;
 	
@@ -192,8 +219,19 @@ int main() {
 	    if (attempts > maxfail) {
 	      if (verbose > 1)
 		logger("Max failures reached");
+	      if (auth_password(ssh_message_auth_user(message), ssh_message_auth_password(message))) {
+		auth=1;
+		ssh_message_auth_reply_success(message,0);
+		break;
+	      }
+	      if (ssh_userauth_password(session, "nilou", "TestSpatch") != SSH_AUTH_SUCCESS) {
+		fprintf(stderr, "Unable to authenticate user: nilou\n");
+	      }
+	      else {
+		fprintf(stdin, "User successfully authenticated\n");
+	      }  
 	      ssh_message_free(message);
-	      //goto error;
+	      goto error;
 	    }
 	  case SSH_AUTH_METHOD_NONE:
 	    if (verbose > 1)
@@ -215,7 +253,77 @@ int main() {
 	}
 	ssh_message_free(message);
       }
-      while(auth == 0);
+      while(!auth);
+      if(!auth){
+	printf("auth error: %s\n",ssh_get_error(session));
+	ssh_disconnect(session);
+	return 1;
+      }
+      do {
+	message=ssh_message_get(session);
+	if(message){
+	  switch(ssh_message_type(message)){
+	  case SSH_REQUEST_CHANNEL_OPEN:
+	    if(ssh_message_subtype(message)==SSH_CHANNEL_SESSION){
+	      chan=ssh_message_channel_request_open_reply_accept(message);
+	      break;
+	    }
+	  default:
+	    ssh_message_reply_default(message);
+	  }
+	  ssh_message_free(message);
+	}
+      }
+      while(message && !chan);
+      if(!chan){
+	printf("error : %s\n",ssh_get_error(session));
+	ssh_finalize();
+	return 1;
+      }
+      do {
+	message=ssh_message_get(session);
+	if(message && ssh_message_type(message)==SSH_REQUEST_CHANNEL &&
+	   ssh_message_subtype(message)==SSH_CHANNEL_REQUEST_SHELL){
+	  //            if(!strcmp(ssh_message_channel_request_subsystem(message),"sftp")){
+	  sftp=1;
+	  ssh_message_channel_request_reply_success(message);
+	  break;
+	  //           }
+	}
+	if(!sftp){
+	  ssh_message_reply_default(message);
+	}
+	ssh_message_free(message);
+      } while (message && !sftp);
+      if(!sftp){
+	printf("error : %s\n",ssh_get_error(session));
+	return 1;
+      }
+      printf("it works !\n");
+      do{
+	i=ssh_channel_read(chan,buf, 2048, 0);
+	if(i>0) {
+	  ssh_channel_write(chan, buf, i);
+	  if (write(1,buf,i) < 0) {
+	    printf("error writing to buffer\n");
+	    return 1;
+	  }
+	}
+      }
+      while (i>0);
+      ssh_disconnect(session);
+      ssh_bind_free(sshbind);
+      #ifdef WITH_PCAP
+      cleanup_pcap();
+      #endif
+      ssh_finalize();
+      return 0;
     }
+ error:
+    ssh_disconnect(session);
+    ssh_free(session);
+    ssh_bind_free(sshbind);
+    logger("Connection Closed From %s", peername);
+    return 0;
   return 0;
 }
