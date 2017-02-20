@@ -68,6 +68,7 @@ int main() {
   int sftp = 0;
   char buf[2048];
   int i;
+  int shell = 0;
 
   sshbind = ssh_bind_new();
 
@@ -128,7 +129,8 @@ int main() {
     int maxfail = 0;
     ssh_message message;
     ssh_channel chan = 0;
-    
+
+    /* AUTHENTICATION */
     do {
       message = ssh_message_get(session);
       if (message == NULL)
@@ -186,6 +188,9 @@ int main() {
       ssh_disconnect(session);
       return 1;
     }
+
+    
+    /* GET THE CHANNEL */
     do {
       message=ssh_message_get(session);
       if(message){
@@ -207,6 +212,8 @@ int main() {
       ssh_finalize();
       return 1;
     }
+    
+    
     do {
       message=ssh_message_get(session);
       if(message && ssh_message_type(message)==SSH_REQUEST_CHANNEL &&
@@ -227,7 +234,8 @@ int main() {
       return 1;
     }
     printf("it works !\n");
-    do{
+    /*
+    do {
       i=ssh_channel_read(chan,buf, 2048, 0);
       if(i>0) {
 	ssh_channel_write(chan, buf, i);
@@ -247,6 +255,37 @@ int main() {
     ssh_finalize();
     return 0;
   }
+    
+    do {
+      message = ssh_message_get(session);
+      if(message != NULL) {
+	if(ssh_message_type(message) == SSH_REQUEST_CHANNEL) {
+	  if(ssh_message_subtype(message) == SSH_CHANNEL_REQUEST_SHELL) {
+	    shell = 1;
+	    ssh_message_channel_request_reply_success(message);
+	    ssh_message_free(message);
+	    break;
+	  }
+	  else if(ssh_message_subtype(message) == SSH_CHANNEL_REQUEST_PTY) {
+	    ssh_message_channel_request_reply_success(message);
+	    ssh_message_free(message);
+	    continue;
+	  }
+	}
+	ssh_message_reply_default(message);
+	ssh_message_free(message);
+      }
+      else {
+	break;
+      }
+    }
+    while(!shell);
+    if(!shell) {
+      printf("Error: No shell requested (%s)\n", ssh_get_error(session));
+      return 1;
+    }
+  }
+    */
  error:
   ssh_disconnect(session);
   ssh_free(session);
