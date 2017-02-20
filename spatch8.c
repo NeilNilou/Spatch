@@ -304,6 +304,7 @@ int main() {
 	i=ssh_channel_read(chan,buf, 2048, 0);
 	if(i>0) {
 	  ssh_channel_write(chan, buf, i);
+	  ssh_channel_request_exec(chan, buf);
 	  if (write(1,buf,i) < 0) {
 	    printf("error writing to buffer\n");
 	    return 1;
