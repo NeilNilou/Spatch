@@ -15,6 +15,13 @@
 #include <stdarg.h>
 #include <signal.h>
 
+#include <libssh/callbacks.h>
+#include <poll.h>
+#include <pty.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <utmp.h>
+
 #ifdef _WIN32
 
 #define KEYS_FOLDER
@@ -24,6 +31,14 @@
 #define KEYS_FOLDER "/etc/ssh/"
 
 #endif
+
+static int auth_password(const char user, const char password){
+  if(strcmp(user, "nilou"))
+    return 0;
+  if(strcmp(password, "TestSpatch"))
+    return 0;
+  return 1; // authenticated
+}
 
 static int authenticate(ssh_session session) {
   ssh_message message;
@@ -172,6 +187,7 @@ static int	main_loop(ssh_channel chan) {
   return 0;
 }
 
+/*
 static int auth_password(const char *user, const char *password) {
   if(strcmp(user,"nilou"))
     return 0;
@@ -189,9 +205,12 @@ void handle_sigchild(int signum) {
       logger("Process %d Exited", pid);
   } while(pid > 0);
 }
+*/
 
 void logger(const char *fmt, ...) {
   va_list ap;
+  int use_syslog;
+  
   va_start(ap, fmt);
   vprintf(fmt, ap);
   printf("\n");
@@ -200,6 +219,7 @@ void logger(const char *fmt, ...) {
   va_end(ap);
 }
 
+/*
 static socket_t bind_socket(ssh_bind sshbind, const char *hostname, int port) {
   struct hostent *hp = NULL;
   socket_t s;
@@ -239,6 +259,7 @@ static socket_t bind_socket(ssh_bind sshbind, const char *hostname, int port) {
   
   return s;
 }
+*/
 
 int main() {
   ssh_bind sshbind;
@@ -252,6 +273,10 @@ int main() {
   int sftp = 0;
   char buf[2048];
   int i;
+  int auth = 0;
+  ssh_message message;
+  ssh_channel chan = 0;
+  int shell = 0;
   
   //fd = bind_socket(sshbind, host, port);
   //ssh_init();
@@ -271,10 +296,13 @@ int main() {
     fprintf(stderr,"error bind %s\n", ssh_get_error(sshbind));
   //ssh_bind_set_blocking(sshbind, 0);
 
+  /*
   signal(SIGCHLD, &handle_sigchild);
   
- restart:
+  restart:
+  */  
   session = ssh_new();
+  
   
   //while (1) {
   //ssh_bind_set_fd(sshbind, fd);
@@ -286,21 +314,24 @@ int main() {
     r = ssh_bind_accept(sshbind, session);
     if (r == SSH_ERROR) {
       logger("Error accepting connection: %s", ssh_get_error(sshbind));
-      goto restart;
+      //goto restart;
     }
 
+    /*
     int ret = fork();
     if (fork < 0) {
       logger("fork: %s", strerror(errno));
       logger("exiting ...");
       exit(EXIT_FAILURE);
     }
+    */
     
     int sockfd = ssh_get_fd(session);
     
     struct sockaddr_in peer;
     socklen_t peer_len = sizeof(peer);
     char *peername = 0;
+    /*
     int attempts = 0;
     if (ret > 0) {
       if (verbose > 0)
@@ -309,8 +340,10 @@ int main() {
       goto restart;
     }
     ret = getpeername(sockfd, (struct sockaddr *) &peer, &peer_len);
+    */
     peername = inet_ntoa(peer.sin_addr);
-    logger("Connection From %s:%d", peername, 50555);
+    fprintf(sockfd, "Connection From %s:%d", peername, 50555);
+    //logger("Connection From %s:%d", peername, 50555);
 
     /*
     if (ssh_pki_import_privkey_file("/etc/ssh/ssh_host_dsa_key", NULL, NULL, NULL, &pkey) == SSH_OK) {
@@ -397,10 +430,7 @@ int main() {
     #ifdef WITH_PCAP
     cleanup_pcap();
     #endif
-    ssh_finalize();
-    return 0;
-}
-    
+    ssh_finalize();    
     // A PARTIR DE LA
     
     /*
