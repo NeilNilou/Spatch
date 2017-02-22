@@ -153,7 +153,7 @@ static int main_loop(ssh_channel chan) {
 
 int main() {
   ssh_bind sshbind;
-  const char *host = "127.0.0.1";
+  const char *host = "192.168.1.58";
   char *port = "50555";
   ssh_session session;
   int fd;
