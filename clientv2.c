@@ -65,7 +65,7 @@ static int auth_callback(const char *prompt, char *buf, size_t len,
 struct ssh_callbacks_struct cb
 = {
   .auth_function=auth_callback,
-    .userdata=NULL
+  .userdata=NULL
 };
 
 /*
@@ -167,20 +167,15 @@ static void select_loop(ssh_session session,ssh_channel channel){
   fd_set fds;
   struct timeval timeout;
   char buffer[4096];
-  ssh_buffer readbuf=ssh_buffer_new();
-  ssh_channel channels[2];
+  /* channels will be set to the channels to poll.
+   * outchannels will contain the result of the poll
+   */
+  ssh_channel channels[2], outchannels[2];
   int lus;
   int eof=0;
   int maxfd;
   int ret;
   while(channel){
-    /* when a signal is caught, ssh_select will return
-     * with SSH_EINTR, which means it should be started
-     * again. It lets you handle the signal the faster you
-     * can, like in this window changed example. Of course, if
-     * your signal handler doesn't call libssh at all, you're
-     * free to handle signals directly in sighandler.
-     */
     do{
       FD_ZERO(&fds);
       if(!eof)
@@ -189,7 +184,11 @@ static void select_loop(ssh_session session,ssh_channel channel){
       timeout.tv_usec=0;
       FD_SET(ssh_get_fd(session),&fds);
       maxfd=ssh_get_fd(session)+1;
-      ret=select(maxfd,&fds,NULL,NULL,&timeout);
+      channels[0]=channel; // set the first channel we want to read from
+      channels[1]=NULL;
+      ret=ssh_select(channels,outchannels,maxfd,&fds,&timeout);
+      if(signal_delayed)
+	sizechanged();
       if(ret==EINTR)
 	continue;
       if(FD_ISSET(0,&fds)){
@@ -201,70 +200,59 @@ static void select_loop(ssh_session session,ssh_channel channel){
 	  ssh_channel_send_eof(channel);
 	}
       }
-      if(FD_ISSET(ssh_get_fd(session),&fds)){
-	ssh_set_fd_toread(session);
+      if(channel && ssh_channel_is_closed(channel)){
+	//ssh_log(session,SSH_LOG_RARE,"exit-status : %d\n",ssh_channel_get_exit_status(channel));
+
+	ssh_channel_free(channel);
+	channel=NULL;
+	channels[0]=NULL;
       }
-      channels[0]=channel; // set the first channel we want to read from
-      channels[1]=NULL;
-      ret=ssh_channel_select(channels,NULL,NULL,NULL); // no specific timeout - just poll
-      if(signal_delayed)
-	sizechanged();
+      if(outchannels[0]){
+	while(channel && ssh_channel_is_open(channel) && ssh_channel_poll(channel,0)!=0){
+	  lus=ssh_channel_read(channel,buffer,sizeof(buffer),0);
+	  if(lus==-1){
+	    fprintf(stderr, "Error reading channel: %s\n",
+		    ssh_get_error(session));
+	    return;
+	  }
+	  if(lus==0){
+	    //ssh_log(session,SSH_LOG_RARE,"EOF received\n");
+	    //ssh_log(session,SSH_LOG_RARE,"exit-status : %d\n",ssh_channel_get_exit_status(channel));
+
+	    ssh_channel_free(channel);
+	    channel=channels[0]=NULL;
+	  } else
+	    if (write(1,buffer,lus) < 0) {
+	      fprintf(stderr, "Error writing to buffer\n");
+	      return;
+	    }
+	}
+	while(channel && ssh_channel_is_open(channel) && ssh_channel_poll(channel,1)!=0){ /* stderr */
+	  lus=ssh_channel_read(channel,buffer,sizeof(buffer),1);
+	  if(lus==-1){
+	    fprintf(stderr, "Error reading channel: %s\n",
+		    ssh_get_error(session));
+	    return;
+	  }
+	  if(lus==0){
+	    //ssh_log(session,SSH_LOG_RARE,"EOF received\n");
+	    //ssh_log(session,SSH_LOG_RARE,"exit-status : %d\n",ssh_channel_get_exit_status(channel));
+	    ssh_channel_free(channel);
+	    channel=channels[0]=NULL;
+	  } else
+	    if (write(2,buffer,lus) < 0) {
+	      fprintf(stderr, "Error writing to buffer\n");
+	      return;
+	    }
+	}
+      }
+      if(channel && ssh_channel_is_closed(channel)){
+	ssh_channel_free(channel);
+	channel=NULL;
+      }
     } while (ret==EINTR || ret==SSH_EINTR);
 
-    // we already looked for input from stdin. Now, we are looking for input from the channel
-
-    if(channel && ssh_channel_is_closed(channel)){
-      ssh_log(session,SSH_LOG_RARE,"exit-status : %d\n",ssh_channel_get_exit_status(channel));
-
-      ssh_channel_free(channel);
-      channel=NULL;
-      channels[0]=NULL;
-    }
-    if(channels[0]){
-      while(channel && ssh_channel_is_open(channel) && ssh_channel_poll(channel,0)>0){
-	lus=channel_read_buffer(channel,readbuf,0,0);
-	if(lus==-1){
-	  fprintf(stderr, "Error reading channel: %s\n",
-		  ssh_get_error(session));
-	  return;
-	}
-	if(lus==0){
-	  ssh_log(session,SSH_LOG_RARE,"EOF received\n");
-	  ssh_log(session,SSH_LOG_RARE,"exit-status : %d\n",ssh_channel_get_exit_status(channel));
-
-	  ssh_channel_free(channel);
-	  channel=channels[0]=NULL;
-	} else
-	  if (write(1,ssh_buffer_get_begin(readbuf),lus) < 0) {
-	    fprintf(stderr, "Error writing to buffer\n");
-	    return;
-	  }
-      }
-      while(channel && ssh_channel_is_open(channel) && ssh_channel_poll(channel,1)>0){ /* stderr */
-	lus=channel_read_buffer(channel,readbuf,0,1);
-	if(lus==-1){
-	  fprintf(stderr, "Error reading channel: %s\n",
-		  ssh_get_error(session));
-	  return;
-	}
-	if(lus==0){
-	  ssh_log(session,SSH_LOG_RARE,"EOF received\n");
-	  ssh_log(session,SSH_LOG_RARE,"exit-status : %d\n",ssh_channel_get_exit_status(channel));
-	  ssh_channel_free(channel);
-	  channel=channels[0]=NULL;
-	} else
-	  if (write(2,ssh_buffer_get_begin(readbuf),lus) < 0) {
-	    fprintf(stderr, "Error writing to buffer\n");
-	    return;
-	  }
-      }
-    }
-    if(channel && ssh_channel_is_closed(channel)){
-      ssh_channel_free(channel);
-      channel=NULL;
-    }
   }
-  ssh_buffer_free(readbuf);
 }
 
 static void shell(ssh_session session){
@@ -272,32 +260,40 @@ static void shell(ssh_session session){
   struct termios terminal_local;
   int interactive=isatty(0);
   channel = ssh_channel_new(session);
+  /*
   if(interactive){
     tcgetattr(0,&terminal_local);
     memcpy(&terminal,&terminal_local,sizeof(struct termios));
   }
+  */
   if(ssh_channel_open_session(channel)){
     printf("error opening channel : %s\n",ssh_get_error(session));
     return;
   }
   chan=channel;
+  /*
   if(interactive){
     ssh_channel_request_pty(channel);
     sizechanged();
   }
+  */
   if(ssh_channel_request_shell(channel)){
     printf("Requesting shell : %s\n",ssh_get_error(session));
     return;
   }
+  /*
   if(interactive){
     cfmakeraw(&terminal_local);
     tcsetattr(0,TCSANOW,&terminal_local);
     setsignal();
   }
-  signal(SIGTERM,do_cleanup);
+  */
+  //signal(SIGTERM,do_cleanup);
   select_loop(session,channel);
+  /*
   if(interactive)
     do_cleanup(0);
+  */
 }
 
 static void batch_shell(ssh_session session){
@@ -415,12 +411,15 @@ ssh_session connect_ssh()
   else
     dprintf(stderr, "Authentication failed: %s\n", ssh_get_error(session));
 
-  ssh_log(session, SSH_LOG_FUNCTIONS, "Authentication success");
-  if(!cmds[0])
+  //ssh_log(session, SSH_LOG_FUNCTIONS, "Authentication success");
+  
+  //if(!cmds[0])
     shell(session);
-  else
-    batch_shell(session);
-
+    /*
+      else
+      
+      batch_shell(session);
+    */
 
 
   /*
