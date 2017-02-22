@@ -42,7 +42,7 @@ static int auth_callback(const char *prompt, char *buf, size_t len,
 
   (void) verify;
   (void) userdata;
-  
+
   if (echo) {
     while ((answer = fgets(buf, len, stdin)) == NULL);
     if ((ptr = strchr(buf, '\n'))) {
@@ -65,7 +65,7 @@ static int auth_callback(const char *prompt, char *buf, size_t len,
 struct ssh_callbacks_struct cb
 = {
   .auth_function=auth_callback,
-  .userdata=NULL
+    .userdata=NULL
 };
 
 /*
@@ -116,30 +116,30 @@ int verify_knownhost(ssh_session session, int allow_new)
 
             if(allow_new == 0)
             {
-                fprintf(stderr, "An existing host-key was not found. Our policy is to deny new hosts.\n");            
-                return -1;
+	    fprintf(stderr, "An existing host-key was not found. Our policy is to deny new hosts.\n");            
+	    return -1;
             }
 
             fprintf(stderr, "An existing host-key was not found. Adding new host.\n");            
             
             if (ssh_write_knownhost(session) < 0)
             {
-                fprintf(stderr, "Error %s\n", strerror(errno));
-                free(hash);
-                return -1;
+	    fprintf(stderr, "Error %s\n", strerror(errno));
+	    free(hash);
+	    return -1;
             }
 
             break;
 
-        case SSH_SERVER_ERROR:
+	    case SSH_SERVER_ERROR:
             fprintf(stderr, "Error %s", ssh_get_error(session));
             free(hash);
             return -1;
-    }
+	    }
     
-    free(hash);
-    return 0;
-}
+	    free(hash);
+	    return 0;
+	    }
 */
 int authenticate_password(ssh_session session)
 {
@@ -322,40 +322,40 @@ ssh_session connect_ssh()
   const int verbosity = 1;
   int result;
   unsigned int port = 22;
-  
+
   const char *host = "127.0.0.1";
   const char *user = "nilou";
   //const char *key_filepath = "/home/nilou/.ssh/id_ecdsa";
   //    const char *key_filepath = "/home/dustin/.ssh/id_dsa";
   const ssh_key key_filepath = "/home/nilou/.ssh/id_rsa";
-  
+
   session = ssh_new();
   if (session == NULL)
     return NULL;
 
   ssh_callbacks_init(&cb);
   ssh_set_callbacks(session,&cb);
-  
-  if (ssh_options_set(session, SSH_OPTIONS_USER, user) < 0) 
+
+  if (ssh_options_set(session, SSH_OPTIONS_USER, user) < 0)
     {
       ssh_free(session);
       return NULL;
     }
-  
-  if (ssh_options_set(session, SSH_OPTIONS_HOST, host) < 0) 
+
+  if (ssh_options_set(session, SSH_OPTIONS_HOST, host) < 0)
     {
       ssh_free(session);
       return NULL;
     }
-  
+
   if (ssh_options_set(session, SSH_OPTIONS_PORT, &port) < 0)
     {
       ssh_free(session);
       return NULL;
     }
-  
+
   ssh_options_set(session, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
-  
+
   if(ssh_connect(session))
     {
       fprintf(stderr, "Connection failed : %s\n", ssh_get_error(session));
@@ -363,9 +363,9 @@ ssh_session connect_ssh()
       ssh_free(session);
       return NULL;
     }
-  
+
   printf("Ready to authenticate.\n");
-  
+
   /*
     if(verify_knownhost(session, 1) != 0)
     {
@@ -408,9 +408,9 @@ ssh_session connect_ssh()
     return NULL;
     }
   */
-  
+
   int rc = authenticate_password(session);
-  if (rc == SSH_AUTH_SUCCESS) 
+  if (rc == SSH_AUTH_SUCCESS)
     printf("Login successful.\n");
   else
     dprintf(stderr, "Authentication failed: %s\n", ssh_get_error(session));
@@ -421,8 +421,8 @@ ssh_session connect_ssh()
   else
     batch_shell(session);
 
-  
-  
+
+
   /*
   // Authenticate ourselves
   password = getpass("Password: ");
@@ -436,7 +436,7 @@ ssh_session connect_ssh()
   exit(-1);
   }
   */
-  
+
   /*
     auth=authenticate_console(session);
     if(auth==SSH_AUTH_SUCCESS){
