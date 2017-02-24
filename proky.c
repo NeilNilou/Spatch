@@ -244,7 +244,7 @@ static void do_cleanup(int i)
   tcsetattr(0,TCSANOW,&terminal);
 }
 
-static void select_loop(ssh_session session, ssh_channel channel, ssh_channel channel_2, socket_t sock)
+static void select_loop(ssh_session session, ssh_channel channel, ssh_channel forward, socket_t sock)
 {
   fd_set fds;
   struct timeval timeout;
@@ -258,7 +258,7 @@ static void select_loop(ssh_session session, ssh_channel channel, ssh_channel ch
   printf("DANS SELECT LOOP\n");
   printf("sock: %d\n", sock);
   printf("fd: %d\n", ssh_get_fd(session));
-  //ssh_channel_write(channel, "ABCDE\n", strlen("ABCDE\n")); écrit sur le client
+  ssh_channel_write(channel, "ABCDE\n", strlen("ABCDE\n")); //écrit sur le client
   //printf("AAAAAAAAA\n"); s'affiche
   ssh_channel_write(channel, "entrée loop\n", strlen("entrée loop\n"));
   while(channel)
@@ -267,11 +267,11 @@ static void select_loop(ssh_session session, ssh_channel channel, ssh_channel ch
 	      {
 		FD_ZERO(&fds);
 		if (!eof)
-		  FD_SET(0,&fds);
+		  FD_SET(sock, &fds);
 		timeout.tv_sec = 30;
 		timeout.tv_usec = 0;
-		//FD_SET(ssh_get_fd(session),&fds);
-		FD_SET(sock, &fds);
+		FD_SET(ssh_get_fd(session),&fds);
+		//FD_SET(sock, &fds);
 		maxfd=ssh_get_fd(session)+1;
 		channels[0] = channel;
 		channels[1] = NULL;
@@ -282,13 +282,14 @@ static void select_loop(ssh_session session, ssh_channel channel, ssh_channel ch
 		  continue;
 		if (FD_ISSET(sock, &fds))
 		  {
-		    lus=read(sock, buffer, sizeof(buffer));
+		    //lus=read(sock, buffer, sizeof(buffer));
+		    lus = ssh_channel_read(channel, buffer, sizeof(buffer), 0);
 		    if (lus)
-		      ssh_channel_write(channel, buffer, lus);
+		      ssh_channel_write(forward, buffer, lus);
 		    else
 		      {
 			eof = 1;
-			ssh_channel_send_eof(channel);
+			ssh_channel_send_eof(forward);
 		      }
 		  }
 		if (channel && ssh_channel_is_closed(channel))
@@ -322,9 +323,9 @@ static void select_loop(ssh_session session, ssh_channel channel, ssh_channel ch
 			      return;
 			    }
 		      }
-		    while (channel && ssh_channel_is_open(channel) && ssh_channel_poll(channel, 1) != 0)
+		    while (forward && ssh_channel_is_open(forward) && ssh_channel_poll(forward, 1) != 0)
 		      {
-			lus = ssh_channel_read(channel, buffer, sizeof(buffer), 1);
+			lus = ssh_channel_read(forward, buffer, sizeof(buffer), 1);
 			if (lus == -1)
 			  {
 			    fprintf(stderr, "Error reading channel: %s\n", ssh_get_error(session));
@@ -333,12 +334,13 @@ static void select_loop(ssh_session session, ssh_channel channel, ssh_channel ch
 			if (lus == 0)
 			  {
 			    ssh_log(session,SSH_LOG_RARE, "EOF received\n");
-			    ssh_log(session,SSH_LOG_RARE, "Exit-status : %d\n", ssh_channel_get_exit_status(channel));
-			    ssh_channel_free(channel);
-			    channel = channels[0] = NULL;
+			    ssh_log(session,SSH_LOG_RARE, "Exit-status : %d\n", ssh_channel_get_exit_status(forward));
+			    ssh_channel_free(forward);
+			    forward = channels[0] = NULL;
 			  }
 			else
-			  if (write(2, buffer, lus) < 0)
+			  //if (write(2, buffer, lus) < 0)
+			  if (ssh_channel_write(channel, buffer, lus))
 			    {
 			      fprintf(stderr, "Error writing to buffer\n");
 			      return;
@@ -357,28 +359,26 @@ static void select_loop(ssh_session session, ssh_channel channel, ssh_channel ch
   printf("FIN DE SELECT LOOP\n");
 }
 
-static void shell(ssh_session session, ssh_channel channel, ssh_channel forward, socket_t sock)
+static void shell(ssh_session session, ssh_channel channel, socket_t sock)
 {
-  //ssh_channel channel_remote;
+  ssh_channel forward;
   struct termios terminal_local;
   int interactive = isatty(0);
-
+  int rc;
+  
   printf("Dans shell\n");
 
-  //channel_remote = ssh_channel_new(session);
+  forward = ssh_channel_new(session);
   
   printf("après channel new\n");
   if (interactive)
     {
       tcgetattr(0,&terminal_local);
       memcpy(&terminal, &terminal_local, sizeof(struct termios));
-      cfmakeraw(&terminal_local);
-      tcsetattr(0, TCSANOW, &terminal_local);
-      setsignal();
     }
   printf("après tcgetattr\n");
 
-  signal(SIGTERM, do_cleanup);
+  //signal(SIGTERM, do_cleanup);
 
   /*
   if (ssh_channel_open_session(channel_remote))
@@ -387,8 +387,16 @@ static void shell(ssh_session session, ssh_channel channel, ssh_channel forward,
       return;
     }
   */
+  rc = ssh_channel_open_forward(forward, "localhost", 22, "localhost", 50555);
+  if (rc != SSH_OK)
+    {
+      ssh_channel_free(forward);
+      return rc;
+    }
+  printf("Forwarding is ok\n");
+  
   printf("avant chan_tmp");
-  //chan_tmp = channel_remote;
+  chan_tmp = forward;
   printf("après chan channel\n");
 
   /*
@@ -398,7 +406,8 @@ static void shell(ssh_session session, ssh_channel channel, ssh_channel forward,
       sizechanged();
     }
   */
-
+  sizechanged();
+  
   printf("après channel request pty\n");
 
   /*
@@ -421,7 +430,7 @@ static void shell(ssh_session session, ssh_channel channel, ssh_channel forward,
   */
 
   printf("avant select loop\n");
-  //signal(SIGTERM, do_cleanup);
+  signal(SIGTERM, do_cleanup);
   printf("après signal\n");
   select_loop(session, channel, forward, sock);
 
@@ -431,17 +440,26 @@ static void shell(ssh_session session, ssh_channel channel, ssh_channel forward,
     do_cleanup(0);
 }
 
-static void batch_shell(ssh_session session, ssh_channel channel, ssh_channel forward, socket_t sock)
+static void batch_shell(ssh_session session, ssh_channel channel, socket_t sock)
 {
-  //ssh_channel channel_remote;
+  ssh_channel forward;
   char buffer[1024];
   int i;
   int s = 0;
-
+  int rc;
+  
   printf("DANS BATCH SHELL\n");
   for (i = 0; i < 10 && cmds[i]; ++i)
     s += snprintf(buffer+s, sizeof(buffer)-s, "%s ", cmds[i]);
-  //channel_remote = ssh_channel_new(session);
+  forward = ssh_channel_new(session);
+  rc = ssh_channel_open_forward(forward, "localhost", 22, "localhost", 50555);
+  if (rc != SSH_OK)
+    {
+      ssh_channel_free(forward);
+      return rc;
+    }
+  printf("Forwarding is ok\n");
+  
   //ssh_channel_open_session(channel_remote);
   if (ssh_channel_request_exec(forward, buffer))
     {
@@ -493,17 +511,6 @@ ssh_session connect_ssh(ssh_session session, ssh_channel channel, socket_t sock)
       return NULL;
     }
   */
-  ssh_channel forward;
-  forward = ssh_channel_new(session);
-  rc = ssh_channel_open_forward(forward,
-				"localhost", 22,
-				"localhost", 5055);
-  if (rc != SSH_OK)
-    {
-      ssh_channel_free(forward);
-      return rc;
-    }
-  printf("Forwarding is ok\n");
 
   //printf("Remote connection to %s %d.\n", host, port);
   /*
@@ -516,9 +523,9 @@ ssh_session connect_ssh(ssh_session session, ssh_channel channel, socket_t sock)
   //shell(session, channel, sock);
   
   if(!cmds[0])
-    shell(session, channel, forward, sock);
+    shell(session, channel, sock);
   else
-    batch_shell(session, channel, forward, sock);
+    batch_shell(session, channel, sock);
   return 0;
   
   ssh_disconnect(session);
