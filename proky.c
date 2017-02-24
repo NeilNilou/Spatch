@@ -361,14 +361,14 @@ static void select_loop(ssh_session session, ssh_channel channel, ssh_channel fo
 
 static void shell(ssh_session session, ssh_channel channel, socket_t sock)
 {
-  ssh_channel forward;
+  ssh_channel chan;
   struct termios terminal_local;
   int interactive = isatty(0);
   int rc;
   
   printf("Dans shell\n");
 
-  forward = ssh_channel_new(session);
+  chan = ssh_channel_new(session);
   
   printf("après channel new\n");
   if (interactive)
@@ -380,23 +380,22 @@ static void shell(ssh_session session, ssh_channel channel, socket_t sock)
 
   //signal(SIGTERM, do_cleanup);
 
-  /*
-  if (ssh_channel_open_session(channel_remote))
+  if (ssh_channel_open_session(chan))
     {
       printf("Error opening channel : %s\n", ssh_get_error(session));
       return;
     }
-  */
-  rc = ssh_channel_open_forward(forward, "localhost", 22, "localhost", 50555);
+  //rc = ssh_channel_open_forward(chan, "localhost", 22, "localhost", 50555);
+  /*
   if (rc != SSH_OK)
     {
-      ssh_channel_free(forward);
+      ssh_channel_free(chan);
       return rc;
     }
   printf("Forwarding is ok\n");
-  
+  */
   printf("avant chan_tmp");
-  chan_tmp = forward;
+  chan_tmp = chan;
   printf("après chan channel\n");
 
   /*
@@ -432,7 +431,7 @@ static void shell(ssh_session session, ssh_channel channel, socket_t sock)
   printf("avant select loop\n");
   signal(SIGTERM, do_cleanup);
   printf("après signal\n");
-  select_loop(session, channel, forward, sock);
+  select_loop(session, channel, chan, sock);
 
   printf("Après select loop\n");
 
@@ -442,7 +441,7 @@ static void shell(ssh_session session, ssh_channel channel, socket_t sock)
 
 static void batch_shell(ssh_session session, ssh_channel channel, socket_t sock)
 {
-  ssh_channel forward;
+  ssh_channel chan;
   char buffer[1024];
   int i;
   int s = 0;
@@ -451,7 +450,8 @@ static void batch_shell(ssh_session session, ssh_channel channel, socket_t sock)
   printf("DANS BATCH SHELL\n");
   for (i = 0; i < 10 && cmds[i]; ++i)
     s += snprintf(buffer+s, sizeof(buffer)-s, "%s ", cmds[i]);
-  forward = ssh_channel_new(session);
+  chan = ssh_channel_new(session);
+  /*
   rc = ssh_channel_open_forward(forward, "localhost", 22, "localhost", 50555);
   if (rc != SSH_OK)
     {
@@ -459,15 +459,16 @@ static void batch_shell(ssh_session session, ssh_channel channel, socket_t sock)
       return rc;
     }
   printf("Forwarding is ok\n");
+  */
   
-  //ssh_channel_open_session(channel_remote);
-  if (ssh_channel_request_exec(forward, buffer))
+  ssh_channel_open_session(chan);
+  if (ssh_channel_request_exec(chan, buffer))
     {
       printf("error executing %s : %s\n", buffer,ssh_get_error(session));
       return;
     }
   printf("DANS BATCH SHELL AVANT SELECT LOOP\n");
-  select_loop(session, channel, forward, sock);
+  select_loop(session, channel, chan, sock);
 }
 
 ssh_session connect_ssh(ssh_session session, ssh_channel channel, socket_t sock)
@@ -475,42 +476,36 @@ ssh_session connect_ssh(ssh_session session, ssh_channel channel, socket_t sock)
   int auth = 0;
   int result;
   int rc;
-  /*
   unsigned int port = 22;
-  //const char *host = "127.0.0.1";
-  //const char *user = "nilou";
+  const char *host = "127.0.0.1";
+  const char *user = "nilou";  
   //const ssh_key key_filepath = "/home/nilou/.ssh/id_rsa";
-  ssh_session session2;
-  
-  session2 = ssh_new();
-  if (session2 == NULL)
+  //ssh_session session2;
+  session = ssh_new();
+  if (session == NULL)
     return NULL;
   if (ssh_options_set(session, SSH_OPTIONS_USER, user) < 0)
     {
       ssh_free(session);
       return NULL;
     }
-
-  if (ssh_options_set(session2, SSH_OPTIONS_HOST, host) < 0)
+  if (ssh_options_set(session, SSH_OPTIONS_HOST, host) < 0)
     {
-      ssh_free(session2);
+      ssh_free(session);
       return NULL;
     }
-
-  if (ssh_options_set(session2, SSH_OPTIONS_PORT, &port) < 0)
+  if (ssh_options_set(session, SSH_OPTIONS_PORT, &port) < 0)
     {
-      ssh_free(session2);
+      ssh_free(session);
       return NULL;
     }
-
-  if (ssh_connect(session2))
+  if (ssh_connect(session))
     {
-      fprintf(stderr, "Connection failed : %s\n", ssh_get_error(session2));
-      ssh_disconnect(session2);
-      ssh_free(session2);
+      fprintf(stderr, "Connection failed : %s\n", ssh_get_error(session));
+      ssh_disconnect(session);
+      ssh_free(session);
       return NULL;
     }
-  */
 
   //printf("Remote connection to %s %d.\n", host, port);
   /*
@@ -546,7 +541,8 @@ int main(int argc, char **argv)
 
   //const char *host = "127.0.0.1";
   //char *port = "50555";
-  ssh_session session;
+  ssh_session session1;
+  ssh_session session2;
   int fd;
   int log = SSH_LOG_FUNCTIONS;  
   int r = -1;
@@ -575,12 +571,12 @@ int main(int argc, char **argv)
   signal(SIGCHLD, &handle_sigchild);
 
  restart:
-  session = ssh_new();
-  if (session == NULL)
+  session1 = ssh_new();
+  if (session1 == NULL)
     {
       dprintf(1,"error allocating", strlen("error allocating"));  
     }
-  r = ssh_bind_accept(sshbind, session);
+  r = ssh_bind_accept(sshbind, session1);
   if (r == SSH_ERROR) {
     logger("Error accepting connection: %s", ssh_get_error(sshbind));
     goto restart;
@@ -592,7 +588,7 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
   
-  int sockfd = ssh_get_fd(session);
+  int sockfd = ssh_get_fd(session1);
   
   struct sockaddr_in peer;
   socklen_t peer_len = sizeof(peer);
@@ -601,14 +597,14 @@ int main(int argc, char **argv)
   if (ret > 0) {
     if (verbose > 0)
       logger("Started Process %d", ret);
-    ssh_free(session);
+    ssh_free(session1);
     goto restart;
   }
   ret = getpeername(sockfd, (struct sockaddr *) &peer, &peer_len);
   peername = inet_ntoa(peer.sin_addr);
   logger("Connection From %s:%d", peername, 50555);
   
-  if (ssh_handle_key_exchange(session) != SSH_OK) {
+  if (ssh_handle_key_exchange(session1) != SSH_OK) {
     printf("Error: ssh_handle_key_exchange, %s\n", ssh_get_error(sshbind));
     goto error;
   }
@@ -623,7 +619,7 @@ int main(int argc, char **argv)
 
     /* AUTHENTICATION */
     do {
-      message = ssh_message_get(session);
+      message = ssh_message_get(session1);
       if (message == NULL)
 	break;
 
@@ -647,7 +643,7 @@ int main(int argc, char **argv)
 	    ssh_message_auth_reply_success(message,0);
 	    break;
 	    //}
-	    if (ssh_userauth_password(session, "nilou", "TestSpatch") != SSH_AUTH_SUCCESS) {
+	    if (ssh_userauth_password(session1, "nilou", "TestSpatch") != SSH_AUTH_SUCCESS) {
 	      fprintf(stderr, "Unable to authenticate user: nilou\n");
 	    }
 	    else {
@@ -677,14 +673,14 @@ int main(int argc, char **argv)
     }
     while(!auth);
     if(!auth){
-      printf("auth error: %s\n", ssh_get_error(session));
-      ssh_disconnect(session);
+      printf("auth error: %s\n", ssh_get_error(session1));
+      ssh_disconnect(session1);
       return 1;
     }
     
     /* GET THE CHANNEL */
     do {
-      message=ssh_message_get(session);
+      message=ssh_message_get(session1);
       if(message){
 	switch(ssh_message_type(message)){
 	case SSH_REQUEST_CHANNEL_OPEN:
@@ -700,18 +696,18 @@ int main(int argc, char **argv)
     }
     while(message && !chan);
     if(!chan){
-      printf("error : %s\n",ssh_get_error(session));
+      printf("error : %s\n",ssh_get_error(session1));
       ssh_finalize();
       return 1;
     }
     //main_loop(chan);
     printf("Client is called\n");
-    connect_ssh(session, chan, sock);
+    connect_ssh(session2, chan, sock);
   }
   
  error:
-  ssh_disconnect(session);
-  ssh_free(session);
+  ssh_disconnect(session1);
+  ssh_free(session1);
   ssh_bind_free(sshbind);
   logger("Connection Closed From %s", peername);
   return 0;
